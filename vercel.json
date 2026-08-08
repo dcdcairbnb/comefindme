@@ -1,0 +1,32 @@
+{
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "env": {
+    "POSTGRES_URLPGSQL": {
+      "description": "Vercel Postgres connection string"
+    },
+    "STRIPE_SECRET_KEY": {
+      "description": "Stripe secret key"
+    },
+    "STRIPE_PUBLISHABLE_KEY": {
+      "description": "Stripe publishable key"
+    },
+    "STRIPE_WEBHOOK_SECRET": {
+      "description": "Stripe webhook signing secret"
+    },
+    "STRIPE_PRICE_ANNUAL": {
+      "description": "Stripe price ID for annual plan"
+    },
+    "STRIPE_PRICE_MONTHLY": {
+      "description": "Stripe price ID for monthly plan"
+    },
+    "JWT_SECRET": {
+      "description": "JWT signing secret"
+    },
+    "FRONTEND_URL": {
+      "description": "Frontend URL for redirects"
+    }
+  }
+}

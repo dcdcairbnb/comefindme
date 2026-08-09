@@ -4,7 +4,7 @@
   "installCommand": "npm install",
   "framework": "nextjs",
   "env": {
-    "POSTGRES_URLPGSQL": {
+    "DATABASE_URL": {
       "description": "Vercel Postgres connection string"
     },
     "STRIPE_SECRET_KEY": {

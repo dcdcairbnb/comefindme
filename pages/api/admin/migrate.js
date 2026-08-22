@@ -25,38 +25,6 @@ const STATEMENTS = [
     metadata JSONB DEFAULT '{}'::jsonb
   )`,
 
-  `CREATE TABLE IF NOT EXISTS licenses (
-    license_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    license_type VARCHAR(20) DEFAULT 'free',
-    tier_name VARCHAR(100) DEFAULT 'Free',
-    max_group_size INTEGER DEFAULT 15,
-    created_at TIMESTAMP DEFAULT NOW(),
-    expires_at TIMESTAMP NULL,
-    is_active BOOLEAN DEFAULT true,
-    renewal_date TIMESTAMP NULL,
-    metadata JSONB DEFAULT '{}'::jsonb
-  )`,
-
-  `CREATE TABLE IF NOT EXISTS subscriptions (
-    subscription_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    license_id UUID REFERENCES licenses(license_id) ON DELETE CASCADE,
-    plan_type VARCHAR(20) DEFAULT 'free',
-    plan_price DECIMAL(10, 2) DEFAULT 0,
-    currency VARCHAR(3) DEFAULT 'USD',
-    billing_cycle VARCHAR(20) DEFAULT 'annual',
-    start_date TIMESTAMP DEFAULT NOW(),
-    end_date TIMESTAMP NULL,
-    renewal_date TIMESTAMP NULL,
-    payment_method_id VARCHAR(255),
-    status VARCHAR(20) DEFAULT 'active',
-    auto_renew BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
-    metadata JSONB DEFAULT '{}'::jsonb
-  )`,
-
   `CREATE TABLE IF NOT EXISTS groups (
     group_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     creator_user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -87,7 +55,11 @@ const STATEMENTS = [
   'ALTER TABLE groups ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true',
   'ALTER TABLE groups ADD COLUMN IF NOT EXISTS group_name VARCHAR(255)',
   'ALTER TABLE groups ADD COLUMN IF NOT EXISTS member_count INTEGER DEFAULT 1',
+  'ALTER TABLE groups ADD COLUMN IF NOT EXISTS max_capacity INTEGER DEFAULT 15',
+  'ALTER TABLE group_members ADD COLUMN IF NOT EXISTS latitude DECIMAL(10, 8)',
+  'ALTER TABLE group_members ADD COLUMN IF NOT EXISTS longitude DECIMAL(11, 8)',
   'ALTER TABLE group_members ADD COLUMN IF NOT EXISTS sharing_until TIMESTAMP NULL',
+  'ALTER TABLE group_members ADD COLUMN IF NOT EXISTS last_location_update TIMESTAMP',
   'ALTER TABLE group_members ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true',
 
   'CREATE INDEX IF NOT EXISTS idx_group_members_group_id ON group_members(group_id)',
@@ -113,8 +85,10 @@ export default async function handler(req, res) {
     return res.status(403).json({ success: false, error: 'Forbidden' });
   }
 
+  const shouldRun = req.method === 'POST' || req.query.run === '1';
+
   try {
-    if (req.method === 'GET') {
+    if (!shouldRun) {
       const schema = await readSchema();
       const counts = {};
       for (const t of Object.keys(schema)) {
@@ -125,11 +99,7 @@ export default async function handler(req, res) {
           counts[t] = 'error';
         }
       }
-      return res.json({ success: true, schema: schema, counts: counts });
-    }
-
-    if (req.method !== 'POST') {
-      return res.status(405).json({ error: 'Method not allowed' });
+      return res.json({ success: true, mode: 'inspect', schema: schema, counts: counts });
     }
 
     const results = [];
@@ -145,7 +115,7 @@ export default async function handler(req, res) {
     }
 
     for (const stmt of STATEMENTS) {
-      const label = stmt.slice(0, 60).replace(/\s+/g, ' ');
+      const label = stmt.slice(0, 55).replace(/\s+/g, ' ');
       try {
         await sql.query(stmt);
         results.push({ stmt: label, ok: true });
@@ -158,6 +128,7 @@ export default async function handler(req, res) {
     const failed = results.filter(function (r) { return !r.ok; });
     res.json({
       success: failed.length === 0,
+      mode: 'migrate',
       failedCount: failed.length,
       failed: failed,
       schema: schema

@@ -1,0 +1,14 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "9LDU3P2JCP.app.glow.share",
+        "paths": [
+          "/join/*",
+          "/join"
+        ]
+      }
+    ]
+  }
+}

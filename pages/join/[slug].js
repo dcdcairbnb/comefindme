@@ -1,6 +1,6 @@
 import { sql } from '@vercel/postgres';
 
-const APP_STORE_URL = 'https://apps.apple.com/app/id0000000000';
+const APP_STORE_URL = 'https://apps.apple.com/app/id6801256606';
 
 export default function JoinPage(props) {
   const code = props.code;
@@ -140,8 +140,10 @@ export async function getServerSideProps(ctx) {
         if (g.expires_at && new Date(g.expires_at) < new Date()) expired = true;
       }
     } catch (e) {
-      // Database unavailable: still show the code so the app can handle it.
-      found = true;
+      // Database unavailable: report not-found rather than faking a valid invite.
+      // Showing "You're invited" for an unresolvable code just hands the app a code
+      // it will reject, which is a worse experience than an honest error.
+      found = false;
     }
   }
 

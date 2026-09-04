@@ -2,7 +2,9 @@ import { sql } from '@vercel/postgres';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
-const SECRET = process.env.JWT_SECRET || 'comefindme-dev-secret-change-me';
+// No fallback: if JWT_SECRET is missing, every request fails closed rather than
+// signing tokens with a value that lives in the public repo.
+const SECRET = process.env.JWT_SECRET;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 function makeCode(len) {
@@ -51,9 +53,11 @@ async function groupsFor(userId) {
   if (g.rows.length === 0) return [];
 
   const ids = g.rows.map(function (r) { return r.group_id; });
+  // Note: email is deliberately not selected. Members should not receive each
+  // other's email addresses; username is enough for display.
   const m = await sql.query(
     `SELECT gm.group_id, gm.user_id, gm.color, gm.latitude, gm.longitude,
-            gm.sharing_until, gm.last_location_update, u.username, u.email
+            gm.sharing_until, gm.last_location_update, u.username
        FROM group_members gm
        JOIN users u ON u.user_id = gm.user_id
       WHERE gm.group_id = ANY($1::uuid[])
@@ -61,18 +65,23 @@ async function groupsFor(userId) {
     [ids]
   );
 
+  const now = Date.now();
   const byGroup = {};
   m.rows.forEach(function (r) {
     if (!byGroup[r.group_id]) byGroup[r.group_id] = [];
+    // A position is only served while the member's sharing window is still open.
+    // Once it passes, coordinates read back as null even if the row still holds
+    // the last value, so nobody keeps being tracked after their window ends.
+    const until = r.sharing_until ? new Date(r.sharing_until) : null;
+    const live = until && until.getTime() > now;
     byGroup[r.group_id].push({
       user_id: r.user_id,
       color: r.color || '#3B82F6',
-      latitude: r.latitude === null || r.latitude === undefined ? null : Number(r.latitude),
-      longitude: r.longitude === null || r.longitude === undefined ? null : Number(r.longitude),
-      sharing_until: r.sharing_until ? new Date(r.sharing_until).toISOString() : null,
-      last_location_update: r.last_location_update ? new Date(r.last_location_update).toISOString() : null,
-      username: r.username,
-      email: r.email
+      latitude: live && r.latitude !== null && r.latitude !== undefined ? Number(r.latitude) : null,
+      longitude: live && r.longitude !== null && r.longitude !== undefined ? Number(r.longitude) : null,
+      sharing_until: live ? until.toISOString() : null,
+      last_location_update: live && r.last_location_update ? new Date(r.last_location_update).toISOString() : null,
+      username: r.username
     });
   });
 
@@ -90,7 +99,21 @@ async function groupsFor(userId) {
   });
 }
 
+// Clears the caller's stored position from every group they are in.
+async function clearLocation(userId) {
+  await sql.query(
+    `UPDATE group_members
+        SET latitude = NULL, longitude = NULL, sharing_until = NULL, last_location_update = NOW()
+      WHERE user_id = $1 AND COALESCE(is_active, true) = true`,
+    [userId]
+  );
+}
+
 export default async function handler(req, res) {
+  if (!SECRET) {
+    return res.status(500).json({ success: false, error: 'Server is not configured.' });
+  }
+
   const parts = req.query.route || [];
   const action = (Array.isArray(parts) ? parts[0] : parts) || '';
   const b = body(req);
@@ -243,17 +266,27 @@ export default async function handler(req, res) {
     }
 
     if (action === 'location' && req.method === 'POST') {
+      // Explicit stop, or a push with no live window: clear the stored position.
+      // The client sends this the moment sharing turns off, even before it has a fix.
+      const until = b.sharing_until ? new Date(b.sharing_until) : null;
+      const validUntil = until && !isNaN(until.getTime()) && until.getTime() > Date.now();
+
+      if (b.clear === true || !validUntil) {
+        await clearLocation(me.user_id);
+        return res.json({ success: true, groups: await groupsFor(me.user_id) });
+      }
+
       const lat = Number(b.latitude);
       const lon = Number(b.longitude);
-      if (!isFinite(lat) || !isFinite(lon)) {
+      if (!isFinite(lat) || !isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
         return res.status(400).json({ success: false, error: 'Bad coordinates.' });
       }
-      const until = b.sharing_until ? new Date(b.sharing_until) : null;
+
       await sql.query(
         `UPDATE group_members
             SET latitude = $1, longitude = $2, sharing_until = $3, last_location_update = NOW()
           WHERE user_id = $4 AND COALESCE(is_active, true) = true`,
-        [lat, lon, until && !isNaN(until.getTime()) ? until.toISOString() : null, me.user_id]
+        [lat, lon, until.toISOString(), me.user_id]
       );
       return res.json({ success: true, groups: await groupsFor(me.user_id) });
     }
@@ -311,6 +344,6 @@ export default async function handler(req, res) {
 
     return res.status(404).json({ success: false, error: 'Unknown request.' });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: 'Something went wrong.' });
   }
 }
